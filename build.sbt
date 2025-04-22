@@ -1,7 +1,7 @@
 organization := "co.fs2"
 name := "fs2-chat"
 
-scalaVersion := "3.4.2"
+scalaVersion := "3.6.4"
 
 libraryDependencies ++= Seq(
   "co.fs2" %% "fs2-io" % "3.10.2",
