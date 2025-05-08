@@ -21,3 +21,4 @@ test-output
 project/metals.sbt
 .bsp
 project/project
+.aider*

@@ -148,6 +148,54 @@ object Server:
             case "quit" =>
               messageSocket.write1(Protocol.ServerCommand.Disconnect) *>
                 F.raiseError(new UserQuit): F[Unit]
+            case msg if msg.startsWith("msg ") =>
+              val parts = msg.stripPrefix("msg ").split(" ", 2)
+              if parts.length == 2 then
+                val targetUser = parts(0)
+                val privateMessage = parts(1)
+                // Find target user
+                clients.get(clientId).flatMap {
+                  case Some(senderClient) =>
+                    senderClient.username match
+                      case Some(senderName) =>
+                        // Find all clients with target username
+                        clients.named.flatMap { namedClients =>
+                          val targetClients = namedClients.filter(
+                            _.username.exists(_.value.equalsIgnoreCase(targetUser))
+                          )
+                          if targetClients.isEmpty then
+                            messageSocket.write1(
+                              Protocol.ServerCommand.Alert(s"User $targetUser not found")
+                            )
+                          else
+                            // Send private message to target and confirmation to sender
+                            targetClients.traverse_(client =>
+                              client.messageSocket.write1(
+                                Protocol.ServerCommand
+                                  .Message(senderName, s"(Private) $privateMessage")
+                              )
+                            ) *>
+                              messageSocket.write1(
+                                Protocol.ServerCommand.Alert(s"Private message sent to $targetUser")
+                              )
+                        }
+                      case None => F.unit // Ignore messages sent before username assignment
+                  case None => F.unit
+                }
+              else
+                messageSocket.write1(
+                  Protocol.ServerCommand.Alert("Usage: /msg <username> <message>")
+                )
+            case "help" =>
+              messageSocket.write1(
+                Protocol.ServerCommand.Alert(
+                  """Available commands:
+                    |  /help - Show this help
+                    |  /users - List connected users
+                    |  /msg <user> <message> - Send private message
+                    |  /quit - Exit the chat""".stripMargin
+                )
+              )
             case _ =>
               messageSocket.write1(Protocol.ServerCommand.Alert("Unknown command"))
         else

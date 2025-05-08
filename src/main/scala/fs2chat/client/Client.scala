@@ -3,11 +3,13 @@ package client
 
 import cats.ApplicativeError
 import cats.effect.{Concurrent, Temporal}
+import cats.implicits._
 import com.comcast.ip4s.{IpAddress, SocketAddress}
 import fs2.{RaiseThrowable, Stream}
 import fs2.io.net.Network
 import java.net.ConnectException
 import scala.concurrent.duration._
+import fs2chat.Command
 
 object Client:
   def start[F[_]: Temporal: Network: Console](
@@ -66,7 +68,7 @@ object Client:
         F.raiseError[Unit](new UserQuit)
     }
 
-  private def processOutgoing[F[_]: RaiseThrowable: Console](
+  private def processOutgoing[F[_]: RaiseThrowable: Console: Concurrent](
       messageSocket: MessageSocket[F, Protocol.ServerCommand, Protocol.ClientCommand]
   ): Stream[F, Unit] =
     Stream
@@ -75,5 +77,20 @@ object Client:
         case Some(txt) => Stream(txt)
         case None      => Stream.raiseError[F](new UserQuit)
       }
-      .map(txt => Protocol.ClientCommand.SendMessage(txt))
-      .evalMap(messageSocket.write1)
+      .evalMap { txt =>
+        if txt.startsWith("/") then
+          for {
+            wasHandled <- Console[F].executeCommand(txt)
+            _ <-
+              if !wasHandled then
+                Command.fromString(txt) match
+                  case Some(Command.Quit) => Concurrent[F].raiseError(new UserQuit)
+                  case Some(Command.Users) =>
+                    messageSocket.write1(Protocol.ClientCommand.SendMessage("/users"))
+                  case Some(Command.Private(user, msg)) =>
+                    messageSocket.write1(Protocol.ClientCommand.SendMessage(s"/msg $user $msg"))
+                  case _ => Concurrent[F].unit
+              else Concurrent[F].unit
+          } yield ()
+        else messageSocket.write1(Protocol.ClientCommand.SendMessage(txt))
+      }
