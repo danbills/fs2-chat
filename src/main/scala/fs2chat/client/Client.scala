@@ -6,8 +6,10 @@ import cats.effect.{Concurrent, Temporal}
 import com.comcast.ip4s.{IpAddress, SocketAddress}
 import fs2.{RaiseThrowable, Stream}
 import fs2.io.net.Network
+import scodec.Codec
+
 import java.net.ConnectException
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 
 object Client:
   def start[F[_]: Temporal: Network: Console](
@@ -37,8 +39,8 @@ object Client:
               .eval(
                 MessageSocket(
                   socket,
-                  Protocol.ServerCommand.codec,
-                  Protocol.ClientCommand.codec,
+                  summon[Codec[Protocol.ServerCommand]],
+                  summon[Codec[Protocol.ClientCommand]],
                   128
                 )
               )
