@@ -69,12 +69,12 @@ object Server:
     def apply[F[_]: Concurrent]: F[Clients[F]] =
       Ref[F].of(Map.empty[UUID, ConnectedClient[F]]).map(ref => new Clients(ref))
 
-  def start[F[_]: Async: Network: Console](port: Port) =
+  def start[F[_]: Concurrent: Network: Console: UUIDGen](port: Port) =
     Stream.exec(Console[F].info(s"Starting server on port $port")) ++
       Stream
         .eval(Clients[F])
         .flatMap { clients =>
-          Network[F].server(port = Some(port)).map { clientSocket =>
+          Network[F].bindAndAccept(SocketAddress.port(port)).map { clientSocket =>
             def unregisterClient(state: ConnectedClient[F]) =
               clients.unregister(state.id).flatMap {
                 _.flatMap(_.username).traverse_(username =>
@@ -108,9 +108,9 @@ object Server:
       clientState: ConnectedClient[F],
       clientSocket: Socket[F]
   ): Stream[F, Nothing] =
-    Stream.exec(clientSocket.remoteAddress.flatMap { clientAddress =>
-      Console[F].info(s"Accepted client ${clientState.id} on $clientAddress")
-    })
+    Stream.exec(
+      Console[F].info(s"Accepted client ${clientState.id} on ${clientSocket.peerAddress}")
+    )
 
   private def processIncoming[F[_]](
       clients: Clients[F],
