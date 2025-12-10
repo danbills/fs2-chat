@@ -69,25 +69,31 @@ object Server:
     def apply[F[_]: Concurrent]: F[Clients[F]] =
       Ref[F].of(Map.empty[UUID, ConnectedClient[F]]).map(ref => new Clients(ref))
 
-  def start[F[_]: Concurrent: Network: Console: UUIDGen](port: Port) =
-    Stream.exec(Console[F].info(s"Starting server on port $port")) ++
-      Stream
-        .eval(Clients[F])
-        .flatMap { clients =>
-          Network[F].bindAndAccept(SocketAddress.port(port)).map { clientSocket =>
-            def unregisterClient(state: ConnectedClient[F]) =
-              clients.unregister(state.id).flatMap {
-                _.flatMap(_.username).traverse_(username =>
-                  clients.broadcast(Protocol.ServerCommand.Alert(s"$username disconnected."))
-                )
-              } *> Console[F].info(s"Unregistered client ${state.id}")
-            Stream
-              .bracket(ConnectedClient[F](clientSocket).flatTap(clients.register))(unregisterClient)
-              .flatMap(client => handleClient[F](clients, client, clientSocket))
-              .scope
+  def start[F[_]: Async: Network: Console: UUIDGen](port: Port) =
+    Stream.eval(Tls.loadContext[F]).flatMap { tlsContext =>
+      Stream.exec(Console[F].info(s"Starting server on port $port")) ++
+        Stream
+          .eval(Clients[F])
+          .flatMap { clients =>
+            Network[F].bindAndAccept(SocketAddress.port(port)).map { clientSocket =>
+              Stream.resource(tlsContext.server(clientSocket)).flatMap { secureSocket =>
+                def unregisterClient(state: ConnectedClient[F]) =
+                  clients.unregister(state.id).flatMap {
+                    _.flatMap(_.username).traverse_(username =>
+                      clients.broadcast(Protocol.ServerCommand.Alert(s"$username disconnected."))
+                    )
+                  } *> Console[F].info(s"Unregistered client ${state.id}")
+                Stream
+                  .bracket(ConnectedClient[F](secureSocket).flatTap(clients.register))(
+                    unregisterClient
+                  )
+                  .flatMap(client => handleClient[F](clients, client, secureSocket))
+                  .scope
+              }
+            }
           }
-        }
-        .parJoinUnbounded
+          .parJoinUnbounded
+    }
 
   private def handleClient[F[_]: Concurrent: Console](
       clients: Clients[F],

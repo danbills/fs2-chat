@@ -2,56 +2,69 @@ package fs2chat
 package client
 
 import cats.ApplicativeError
-import cats.effect.{Concurrent, Temporal}
+import cats.effect.{Async, Concurrent}
 import com.comcast.ip4s.{IpAddress, SocketAddress}
 import fs2.{RaiseThrowable, Stream}
 import fs2.io.net.Network
+import fs2.io.net.tls.TLSContext
 import scodec.Codec
 
 import java.net.ConnectException
 import scala.concurrent.duration.*
 
 object Client:
-  def start[F[_]: Temporal: Network: Console](
+  def start[F[_]: Async: Network: Console](
       address: SocketAddress[IpAddress],
       desiredUsername: Username
   ): Stream[F, Unit] =
-    connect(address, desiredUsername).handleErrorWith {
+    Stream.eval(Tls.loadContext[F]).flatMap { tlsContext =>
+      connectLoop(address, desiredUsername, tlsContext)
+    }
+
+  private def connectLoop[F[_]: Async: Network: Console](
+      address: SocketAddress[IpAddress],
+      desiredUsername: Username,
+      tlsContext: TLSContext[F]
+  ): Stream[F, Unit] =
+    connect(address, desiredUsername, tlsContext).handleErrorWith {
       case _: ConnectException =>
         val retryDelay = 5.seconds
         Stream.exec(Console[F].errorln(s"Failed to connect. Retrying in $retryDelay.")) ++
-          start(address, desiredUsername)
+          connectLoop(address, desiredUsername, tlsContext)
             .delayBy(retryDelay)
       case _: UserQuit => Stream.empty
       case t           => Stream.raiseError(t)
     }
 
-  private def connect[F[_]: Concurrent: Network: Console](
+  private def connect[F[_]: Async: Network: Console](
       address: SocketAddress[IpAddress],
-      desiredUsername: Username
+      desiredUsername: Username,
+      tlsContext: TLSContext[F]
   ): Stream[F, Unit] =
     Stream.exec(Console[F].info(s"Connecting to server $address")) ++
       Stream
         .resource(Network[F].connect(address))
         .flatMap { socket =>
-          Stream.exec(Console[F].info("🎉 Connected! 🎊")) ++
-            Stream
-              .eval(
-                MessageSocket(
-                  socket,
-                  summon[Codec[Protocol.ServerCommand]],
-                  summon[Codec[Protocol.ClientCommand]],
-                  128
-                )
-              )
-              .flatMap { messageSocket =>
-                Stream.exec(
-                  messageSocket.write1(Protocol.ClientCommand.RequestUsername(desiredUsername))
-                ) ++
-                  processIncoming(messageSocket).concurrently(
-                    processOutgoing(messageSocket)
+          Stream.resource(tlsContext.client(socket)).flatMap { secureSocket =>
+            Stream.exec(Console[F].info("🎉 Connected! 🎊")) ++
+              Stream
+                .eval(
+                  MessageSocket(
+                    secureSocket,
+                    summon[Codec[Protocol.ServerCommand]],
+                    summon[Codec[Protocol.ClientCommand]],
+                    128
                   )
-              }
+                )
+                .flatMap { messageSocket =>
+                  Stream.exec(
+                    messageSocket.write1(Protocol.ClientCommand.RequestUsername(desiredUsername))
+                  ) ++
+                    processIncoming(messageSocket).concurrently(
+                      processOutgoing(messageSocket)
+                    )
+                }
+          }
         }
 
   private def processIncoming[F[_]: Console](
