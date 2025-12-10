@@ -1,7 +1,7 @@
 organization := "co.fs2"
 name := "fs2-chat"
 
-scalaVersion := "3.6.4"
+scalaVersion := "3.8.0-RC3"
 
 scalacOptions += "-deprecation"
 

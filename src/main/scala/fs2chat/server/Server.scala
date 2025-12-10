@@ -5,7 +5,7 @@ import cats.{FlatMap, MonadError}
 import cats.effect.{Async, Concurrent, Ref, Sync}
 import cats.effect.std.UUIDGen
 import cats.implicits.*
-import com.comcast.ip4s.Port
+import com.comcast.ip4s.{Port, SocketAddress}
 import fs2.Stream
 import fs2.io.net.{Network, Socket}
 import fs2chat.Protocol.ClientCommand
