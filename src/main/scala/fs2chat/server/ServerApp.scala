@@ -11,7 +11,7 @@ object ServerApp extends IOApp:
     Command("fs2chat-server", "FS2 Chat Server") {
       Opts
         .option[Int]("port", "Port to bind for connection requests")
-        .withDefault(5555)
+        .withDefault(5556)
         .mapValidated(p => Port.fromInt(p).toValidNel("Invalid port number"))
     }
 
